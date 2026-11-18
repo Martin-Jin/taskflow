@@ -71,7 +71,8 @@ const SNAP_MIN = 15; // drag/resize snaps to 15-minute increments
 // 0.8 (48px/hour) was the app's original fixed density; levels below it
 // zoom out, levels above it zoom in further for finer control over densely
 // packed days. Defaults to the top of the range (max zoom-in).
-export const ZOOM_LEVELS_PX_PER_MIN = [0.55, 0.65, 0.8, 1.0, 1.25];
+// export const ZOOM_LEVELS_PX_PER_MIN = [0.55, 0.65, 0.8, 1.0, 1.25];
+export const ZOOM_LEVELS_PX_PER_MIN = [1.0, 1.25];
 export const DEFAULT_ZOOM_INDEX = ZOOM_LEVELS_PX_PER_MIN.length - 1;
 
 // Both two-line height thresholds (the normal-type one and the smaller
@@ -1015,43 +1016,43 @@ export default function WeekView({
       <div
         className={`week-grid ${isMobile && dayCount === 1 ? 'is-single-day-mobile' : ''}`}
         ref={gridRef}
-      style={{
-        gridTemplateRows: hasAllDayEvents ? `auto auto ${gridHeight}px` : `auto ${gridHeight}px`,
-        gridTemplateColumns: `56px repeat(${dayCount}, 1fr)`,
-        '--hour-height': `${pxPerMin * 60}px`,
-      }}
-    >
-      {zoomHint && <div className="zoom-hint">{zoomHint}</div>}
-      {/* Mobile Day view: the toolbar title above already spells out this
+        style={{
+          gridTemplateRows: hasAllDayEvents ? `auto auto ${gridHeight}px` : `auto ${gridHeight}px`,
+          gridTemplateColumns: `56px repeat(${dayCount}, 1fr)`,
+          '--hour-height': `${pxPerMin * 60}px`,
+        }}
+      >
+        {zoomHint && <div className="zoom-hint">{zoomHint}</div>}
+        {/* Mobile Day view: the toolbar title above already spells out this
           single day's full date, so the day-header row's own dow/dom
           duplicated it directly underneath (see is-single-day-mobile's CSS
           for the header cells this hides). The gutter cell that would
           otherwise sit empty in that row instead gets a compact "Aug 5"
           label — still useful there since it's the one place in the grid a
           user glancing at just the time column sees which day they're on. */}
-      <div className="time-gutter-cell">
-        {isMobile && dayCount === 1 && <span className="time-gutter-date">{formatShortDate(days[0])}</span>}
-      </div>
-      {days.map((day, i) => (
-        <div
-          key={day}
-          className={`day-header ${day === todayIso ? 'today' : ''} ${i === days.length - 1 ? 'is-last-col' : ''}`}
-          role="button"
-          tabIndex={0}
-          onClick={() => onSelectDay?.(day)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              onSelectDay?.(day);
-            }
-          }}
-        >
-          <div className="dow">{DOW_LABELS[dayOfWeek(day)]}</div>
-          <div className="dom">{day.slice(8, 10)}</div>
+        <div className="time-gutter-cell">
+          {isMobile && dayCount === 1 && <span className="time-gutter-date">{formatShortDate(days[0])}</span>}
         </div>
-      ))}
+        {days.map((day, i) => (
+          <div
+            key={day}
+            className={`day-header ${day === todayIso ? 'today' : ''} ${i === days.length - 1 ? 'is-last-col' : ''}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => onSelectDay?.(day)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onSelectDay?.(day);
+              }
+            }}
+          >
+            <div className="dow">{DOW_LABELS[dayOfWeek(day)]}</div>
+            <div className="dom">{day.slice(8, 10)}</div>
+          </div>
+        ))}
 
-      {/* All-day row, between the day headers and the time grid so a chip
+        {/* All-day row, between the day headers and the time grid so a chip
           reads under the date it belongs to. Sticky rather than a sibling
           above .week-grid (which is the scroll container): the grid opens
           anchored to the morning, so a non-sticky row here would already be
@@ -1060,360 +1061,360 @@ export default function WeekView({
           is measured rather than assumed since it changes with the mobile
           single-day variant. Rendered only when there's something in it, so a
           calendar with no all-day events is unchanged. */}
-      {hasAllDayEvents && (
-        <>
-          <div className="week-allday-gutter" style={{ top: dayHeaderHeight }}>
-            All day
-          </div>
-          {days.map((day) => (
-            <div key={`allday-${day}`} className="week-allday-cell" style={{ top: dayHeaderHeight }}>
-              {(allDayByDay.get(day) || []).map((evt) => (
-                <button
-                  key={evt.id}
-                  type="button"
-                  className={`week-allday-chip ${evt.isFreeTime ? 'is-free' : ''}`}
-                  onClick={() => onSelectEvent?.(evt)}
-                  title={
-                    evt.spanStartDate
-                      ? `${evt.title} (all day, ${evt.spanStartDate} to ${evt.spanEndDate})`
-                      : `${evt.title} (all day)`
-                  }
-                >
-                  {evt.title}
-                </button>
-              ))}
+        {hasAllDayEvents && (
+          <>
+            <div className="week-allday-gutter" style={{ top: dayHeaderHeight }}>
+              All day
+            </div>
+            {days.map((day) => (
+              <div key={`allday-${day}`} className="week-allday-cell" style={{ top: dayHeaderHeight }}>
+                {(allDayByDay.get(day) || []).map((evt) => (
+                  <button
+                    key={evt.id}
+                    type="button"
+                    className={`week-allday-chip ${evt.isFreeTime ? 'is-free' : ''}`}
+                    onClick={() => onSelectEvent?.(evt)}
+                    title={
+                      evt.spanStartDate
+                        ? `${evt.title} (all day, ${evt.spanStartDate} to ${evt.spanEndDate})`
+                        : `${evt.title} (all day)`
+                    }
+                  >
+                    {evt.title}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </>
+        )}
+
+        <div style={{ position: 'relative', height: gridHeight }}>
+          {hourMarks.map((m) => (
+            <div
+              key={m}
+              className="time-label"
+              style={{
+                position: 'absolute',
+                top: Math.round((m - GRID_START_MIN) * pxPerMin),
+                right: 0,
+                // Every label is centered on its own hour line except the very
+                // first, which would sit half above the top of the grid and get
+                // clipped — that edge is now reachable (00:00), so it matters.
+                transform: m === GRID_START_MIN ? 'none' : 'translateY(-50%)',
+              }}
+            >
+              {minutesToTime(m)}
             </div>
           ))}
-        </>
-      )}
+        </div>
 
-      <div style={{ position: 'relative', height: gridHeight }}>
-        {hourMarks.map((m) => (
-          <div
-            key={m}
-            className="time-label"
-            style={{
-              position: 'absolute',
-              top: Math.round((m - GRID_START_MIN) * pxPerMin),
-              right: 0,
-              // Every label is centered on its own hour line except the very
-              // first, which would sit half above the top of the grid and get
-              // clipped — that edge is now reachable (00:00), so it matters.
-              transform: m === GRID_START_MIN ? 'none' : 'translateY(-50%)',
-            }}
-          >
-            {minutesToTime(m)}
-          </div>
-        ))}
-      </div>
-
-      {days.map((day) => {
-        const dayItems = dayItemsByDay.get(day) || [];
-        return (
-          <div
-            key={day}
-            data-day={day}
-            ref={(el) => { dayColumnRefs.current[day] = el; }}
-            className={`day-column ${dragOverDay === day ? 'is-dragover' : ''}`}
-            style={{ height: gridHeight }}
-            onDragOver={(e) => handleDragOverDay(e, day)}
-            onDragLeave={() => setDragOverDay(null)}
-            onDrop={(e) => handleDropOnDay(e, day)}
-            onMouseDown={(e) => handleColumnMouseDown(e, day)}
-          >
-            {(routinesByDay.get(day) || []).map((r) => {
-              const top = timeToY(r.startTime);
-              const height = Math.max(1, timeToY(r.endTime) - top);
-              const showRoutineTime = height >= TWO_LINE_MIN_HEIGHT;
-              return (
-                <div
-                  key={r.id}
-                  className="cal-routine-block"
-                  style={{ top, height }}
-                  /* Full name on hover for the half-width block, without
-                     waiting out the marquee. */
-                  title={`${r.label} · ${r.startTime}–${r.endTime}`}
-                  onMouseDown={(e) => handleColumnMouseDown(e, day, dayColumnRefs.current[day])}
-                >
-                  <span className="cal-routine-block-label">
-                    {/* Marquee rather than a bare ellipsis: the block is half a
+        {days.map((day) => {
+          const dayItems = dayItemsByDay.get(day) || [];
+          return (
+            <div
+              key={day}
+              data-day={day}
+              ref={(el) => { dayColumnRefs.current[day] = el; }}
+              className={`day-column ${dragOverDay === day ? 'is-dragover' : ''}`}
+              style={{ height: gridHeight }}
+              onDragOver={(e) => handleDragOverDay(e, day)}
+              onDragLeave={() => setDragOverDay(null)}
+              onDrop={(e) => handleDropOnDay(e, day)}
+              onMouseDown={(e) => handleColumnMouseDown(e, day)}
+            >
+              {(routinesByDay.get(day) || []).map((r) => {
+                const top = timeToY(r.startTime);
+                const height = Math.max(1, timeToY(r.endTime) - top);
+                const showRoutineTime = height >= TWO_LINE_MIN_HEIGHT;
+                return (
+                  <div
+                    key={r.id}
+                    className="cal-routine-block"
+                    style={{ top, height }}
+                    /* Full name on hover for the half-width block, without
+                       waiting out the marquee. */
+                    title={`${r.label} · ${r.startTime}–${r.endTime}`}
+                    onMouseDown={(e) => handleColumnMouseDown(e, day, dayColumnRefs.current[day])}
+                  >
+                    <span className="cal-routine-block-label">
+                      {/* Marquee rather than a bare ellipsis: the block is half a
                         column wide now (see calendar.css), so a longer routine
                         name no longer fits. MarqueeText measures real overflow
                         and only animates when there is some, and its animation
                         is plain CSS so it already collapses under
                         prefers-reduced-motion and the Animations toggle. */}
-                    <MarqueeText text={r.label} />
-                    {!showRoutineTime && (
+                      <MarqueeText text={r.label} />
+                      {!showRoutineTime && (
+                        <span className="cal-routine-block-time">
+                          {' '}
+                          {r.startTime}–{r.endTime}
+                        </span>
+                      )}
+                    </span>
+                    {showRoutineTime && (
                       <span className="cal-routine-block-time">
-                        {' '}
                         {r.startTime}–{r.endTime}
                       </span>
                     )}
-                  </span>
-                  {showRoutineTime && (
-                    <span className="cal-routine-block-time">
-                      {r.startTime}–{r.endTime}
-                    </span>
-                  )}
+                  </div>
+                );
+              })}
+
+              {showNowLine && day === todayIso && (
+                <div className="now-line" style={{ top: timeToY(minutesToTime(nowMinutes)) }}>
+                  <span className="now-line-dot" />
                 </div>
-              );
-            })}
-
-            {showNowLine && day === todayIso && (
-              <div className="now-line" style={{ top: timeToY(minutesToTime(nowMinutes)) }}>
-                <span className="now-line-dot" />
-              </div>
-            )}
-
-            {createDrag &&
-              createDrag.day === day &&
-              renderGhost(
-                Math.min(createDrag.startMin, createDrag.currentMin),
-                Math.max(createDrag.startMin, createDrag.currentMin),
-                'New event'
               )}
 
-            {dragPreview &&
-              dragPreview.day === day &&
-              renderGhost(dragPreview.startMin, dragPreview.startMin + dragPreview.duration, 'Move here')}
+              {createDrag &&
+                createDrag.day === day &&
+                renderGhost(
+                  Math.min(createDrag.startMin, createDrag.currentMin),
+                  Math.max(createDrag.startMin, createDrag.currentMin),
+                  'New event'
+                )}
 
-            {dayItems.map((item) => {
-              const { lane, totalLanes } = item;
-              // Items side-by-side within an overlap group — see
-              // layoutDayItems above. totalLanes is 1 for the common case
-              // (no overlap, or a lone item next to a collapsed cluster chip),
-              // so this is a no-op then.
-              const laneWidthPct = 100 / totalLanes;
-              const laneStyle =
-                totalLanes > 1
-                  ? { left: `calc(3px + ${lane * laneWidthPct}%)`, right: 'auto', width: `calc(${laneWidthPct}% - 6px)` }
-                  : null;
+              {dragPreview &&
+                dragPreview.day === day &&
+                renderGhost(dragPreview.startMin, dragPreview.startMin + dragPreview.duration, 'Move here')}
 
-              if (item.kind === 'cluster') {
-                const clusterKey = `${day}_${item.start}`;
-                // top/height are pre-packed by computeDayPositions so this
-                // box can never overlap whatever comes before/after it in
-                // its lane, regardless of how many items are chained.
-                const { top, height } = item;
-                // Below TWO_LINE_MIN_HEIGHT there isn't room for both the
-                // title and time-range lines, so the time line is dropped
-                // rather than left to clip into the block below.
-                const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
-                const isOpen = openCluster?.key === clusterKey;
-                const hasEvent = item.items.some((it) => it.type === 'event');
-                const titleLines = clusterLabel(item.items, taskById, clusterMaxTitleLines(height, showTimeLine));
-                const fullTitleList = item.items.map((it) => clusterItemTitle(it, taskById)).join(', ');
-                const totalMinutes = item.items
-                  .filter((it) => it.type === 'block')
-                  .reduce((sum, it) => sum + (timeToMinutes(it.data.endTime) - timeToMinutes(it.data.startTime)), 0);
-                const openThisCluster = (rect) => setOpenCluster({ key: clusterKey, rect, items: item.items });
-                // Every underlying item's selection key — clicking a cluster
-                // chip in selection mode selects ALL of them at once (see
-                // this feature's MonthView/cluster note), not just the chip.
-                const clusterKeys = item.items.map((it) => makeSelectionKey(it.type, it.data.id));
-                const clusterAllSelected = selectionMode && clusterKeys.every((k) => selectedKeys?.has(k));
-                // Toggle behavior: if every underlying item is already
-                // selected, clicking again deselects them all; otherwise
-                // selects everything the chip represents in one go (see this
-                // feature's MonthView/cluster note — "clicking a cluster/
-                // overflow chip in selection mode selects ALL items it
-                // represents at once").
-                const toggleClusterSelection = () => {
-                  if (clusterAllSelected) clusterKeys.forEach((k) => onToggleSelectKey?.(k));
-                  else onSelectManyKeys?.(clusterKeys);
-                };
-                return (
-                  <div
-                    key={clusterKey}
-                    className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''} ${clusterAllSelected ? 'is-selected' : ''} ${selectionMode && !clusterAllSelected ? 'is-selection-dimmed' : ''}`}
-                    style={{ top, height, ...laneStyle }}
-                    role="button"
-                    tabIndex={0}
-                    aria-pressed={selectionMode ? clusterAllSelected : undefined}
-                    aria-label={selectionMode ? `Select ${fullTitleList}` : undefined}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (selectionMode) {
-                        toggleClusterSelection();
-                        return;
-                      }
-                      if (isOpen) setOpenCluster(null);
-                      else openThisCluster(e.currentTarget.getBoundingClientRect());
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
+              {dayItems.map((item) => {
+                const { lane, totalLanes } = item;
+                // Items side-by-side within an overlap group — see
+                // layoutDayItems above. totalLanes is 1 for the common case
+                // (no overlap, or a lone item next to a collapsed cluster chip),
+                // so this is a no-op then.
+                const laneWidthPct = 100 / totalLanes;
+                const laneStyle =
+                  totalLanes > 1
+                    ? { left: `calc(3px + ${lane * laneWidthPct}%)`, right: 'auto', width: `calc(${laneWidthPct}% - 6px)` }
+                    : null;
+
+                if (item.kind === 'cluster') {
+                  const clusterKey = `${day}_${item.start}`;
+                  // top/height are pre-packed by computeDayPositions so this
+                  // box can never overlap whatever comes before/after it in
+                  // its lane, regardless of how many items are chained.
+                  const { top, height } = item;
+                  // Below TWO_LINE_MIN_HEIGHT there isn't room for both the
+                  // title and time-range lines, so the time line is dropped
+                  // rather than left to clip into the block below.
+                  const showTimeLine = height >= TWO_LINE_MIN_HEIGHT;
+                  const isOpen = openCluster?.key === clusterKey;
+                  const hasEvent = item.items.some((it) => it.type === 'event');
+                  const titleLines = clusterLabel(item.items, taskById, clusterMaxTitleLines(height, showTimeLine));
+                  const fullTitleList = item.items.map((it) => clusterItemTitle(it, taskById)).join(', ');
+                  const totalMinutes = item.items
+                    .filter((it) => it.type === 'block')
+                    .reduce((sum, it) => sum + (timeToMinutes(it.data.endTime) - timeToMinutes(it.data.startTime)), 0);
+                  const openThisCluster = (rect) => setOpenCluster({ key: clusterKey, rect, items: item.items });
+                  // Every underlying item's selection key — clicking a cluster
+                  // chip in selection mode selects ALL of them at once (see
+                  // this feature's MonthView/cluster note), not just the chip.
+                  const clusterKeys = item.items.map((it) => makeSelectionKey(it.type, it.data.id));
+                  const clusterAllSelected = selectionMode && clusterKeys.every((k) => selectedKeys?.has(k));
+                  // Toggle behavior: if every underlying item is already
+                  // selected, clicking again deselects them all; otherwise
+                  // selects everything the chip represents in one go (see this
+                  // feature's MonthView/cluster note — "clicking a cluster/
+                  // overflow chip in selection mode selects ALL items it
+                  // represents at once").
+                  const toggleClusterSelection = () => {
+                    if (clusterAllSelected) clusterKeys.forEach((k) => onToggleSelectKey?.(k));
+                    else onSelectManyKeys?.(clusterKeys);
+                  };
+                  return (
+                    <div
+                      key={clusterKey}
+                      className={`cal-block cal-cluster ${isOpen ? 'is-open' : ''} ${clusterAllSelected ? 'is-selected' : ''} ${selectionMode && !clusterAllSelected ? 'is-selection-dimmed' : ''}`}
+                      style={{ top, height, ...laneStyle }}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={selectionMode ? clusterAllSelected : undefined}
+                      aria-label={selectionMode ? `Select ${fullTitleList}` : undefined}
+                      onClick={(e) => {
+                        e.stopPropagation();
                         if (selectionMode) {
                           toggleClusterSelection();
                           return;
                         }
                         if (isOpen) setOpenCluster(null);
                         else openThisCluster(e.currentTarget.getBoundingClientRect());
-                      }
-                    }}
-                    title={`${fullTitleList} · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
-                  >
-                    <div className="cal-cluster-title-stack">
-                      {titleLines.map((line, i) => (
-                        <div className="cal-cluster-title-line" key={i}>
-                          {line}
-                        </div>
-                      ))}
-                    </div>
-                    {showTimeLine && (
-                      <div className="cal-block-time">
-                        {minutesToTime(item.start)}–{minutesToTime(item.end)}
-                        {totalMinutes > 0 && !hasEvent ? ` · ${formatHours(totalMinutes / 60)}` : ''}
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          if (selectionMode) {
+                            toggleClusterSelection();
+                            return;
+                          }
+                          if (isOpen) setOpenCluster(null);
+                          else openThisCluster(e.currentTarget.getBoundingClientRect());
+                        }
+                      }}
+                      title={`${fullTitleList} · ${minutesToTime(item.start)}–${minutesToTime(item.end)}`}
+                    >
+                      <div className="cal-cluster-title-stack">
+                        {titleLines.map((line, i) => (
+                          <div className="cal-cluster-title-line" key={i}>
+                            {line}
+                          </div>
+                        ))}
                       </div>
-                    )}
-                  </div>
-                );
-              }
+                      {showTimeLine && (
+                        <div className="cal-block-time">
+                          {minutesToTime(item.start)}–{minutesToTime(item.end)}
+                          {totalMinutes > 0 && !hasEvent ? ` · ${formatHours(totalMinutes / 60)}` : ''}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
 
-              if (item.type === 'event') {
-                const evt = item.data;
-                const { top } = item;
-                const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine, isCompact } = itemLiveState(item);
-                const evtKey = makeSelectionKey('event', evt.id);
-                const evtSelected = selectionMode && !!selectedKeys?.has(evtKey);
-                // Drag AND resize are both suppressed while selection mode is
-                // active — see this feature's DRAG CONFLICT note.
-                const dragSuppressed = isMobile || evt.canEdit === false || selectionMode;
-                return (
-                  <div
-                    key={evt.id}
-                    id={`event-${evt.id}`}
-                    className={`cal-event cal-event-item ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''} ${selectionMode && !evtSelected ? 'is-selection-dimmed' : ''}`}
-                    aria-pressed={selectionMode ? evtSelected : undefined}
-                    aria-label={selectionMode ? `Select ${evt.title}` : undefined}
-                    style={{ top, height, ...laneStyle }}
-                    // Desktop gets the richer HoverPreviewCard instead (see
-                    // below) — mobile has no hover, so it keeps the native
-                    // title tooltip (which does nothing there anyway, but
-                    // costs nothing to leave as an accessibility fallback).
-                    title={isMobile ? (evt.isFreeTime ? `${evt.title} (marked as free time — schedulable)` : evt.title) : undefined}
-                    draggable={!dragSuppressed}
-                    onDragStart={dragSuppressed ? undefined : (e) => handleDragStart(e, item)}
-                    onDragEnd={dragSuppressed ? undefined : endDrag}
-                    // Unlike List/Board (where reparent-drag is a secondary,
-                    // less-central gesture), Calendar's touch-drag-to-
-                    // reschedule is a core existing interaction — long-press
-                    // here keeps driving THAT (unchanged) rather than being
-                    // repurposed to enter selection mode, so entering
-                    // selection mode on Calendar's mobile view is reachable
-                    // only via the explicit Select toolbar button (see this
-                    // feature's report for this judgment call). Suppressed
-                    // entirely once selectionMode is active, same as the
-                    // drag handlers above.
-                    onTouchStart={selectionMode ? undefined : (e) => handleItemTouchStart(e, item)}
-                    onClick={() => {
-                      if (selectionMode) {
-                        onToggleSelectKey?.(evtKey);
-                        return;
-                      }
-                      onSelectEvent?.(evt);
-                    }}
-                    onMouseEnter={
-                      isMobile
-                        ? undefined
-                        : (e) =>
-                            scheduleHoverPreview(e.currentTarget.getBoundingClientRect(), {
-                              title: evt.title,
-                              timeText: `${evt.startTime}–${evt.endTime}`,
-                            })
-                    }
-                    onMouseLeave={isMobile ? undefined : cancelHoverPreview}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
+                if (item.type === 'event') {
+                  const evt = item.data;
+                  const { top } = item;
+                  const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine, isCompact } = itemLiveState(item);
+                  const evtKey = makeSelectionKey('event', evt.id);
+                  const evtSelected = selectionMode && !!selectedKeys?.has(evtKey);
+                  // Drag AND resize are both suppressed while selection mode is
+                  // active — see this feature's DRAG CONFLICT note.
+                  const dragSuppressed = isMobile || evt.canEdit === false || selectionMode;
+                  return (
+                    <div
+                      key={evt.id}
+                      id={`event-${evt.id}`}
+                      className={`cal-event cal-event-item ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${evt.isFreeTime ? 'free-time' : ''} ${evt.canEdit === false ? 'is-readonly' : ''} ${isMobile ? 'is-mobile' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${evtSelected ? 'is-selected' : ''} ${selectionMode && !evtSelected ? 'is-selection-dimmed' : ''}`}
+                      aria-pressed={selectionMode ? evtSelected : undefined}
+                      aria-label={selectionMode ? `Select ${evt.title}` : undefined}
+                      style={{ top, height, ...laneStyle }}
+                      // Desktop gets the richer HoverPreviewCard instead (see
+                      // below) — mobile has no hover, so it keeps the native
+                      // title tooltip (which does nothing there anyway, but
+                      // costs nothing to leave as an accessibility fallback).
+                      title={isMobile ? (evt.isFreeTime ? `${evt.title} (marked as free time — schedulable)` : evt.title) : undefined}
+                      draggable={!dragSuppressed}
+                      onDragStart={dragSuppressed ? undefined : (e) => handleDragStart(e, item)}
+                      onDragEnd={dragSuppressed ? undefined : endDrag}
+                      // Unlike List/Board (where reparent-drag is a secondary,
+                      // less-central gesture), Calendar's touch-drag-to-
+                      // reschedule is a core existing interaction — long-press
+                      // here keeps driving THAT (unchanged) rather than being
+                      // repurposed to enter selection mode, so entering
+                      // selection mode on Calendar's mobile view is reachable
+                      // only via the explicit Select toolbar button (see this
+                      // feature's report for this judgment call). Suppressed
+                      // entirely once selectionMode is active, same as the
+                      // drag handlers above.
+                      onTouchStart={selectionMode ? undefined : (e) => handleItemTouchStart(e, item)}
+                      onClick={() => {
                         if (selectionMode) {
                           onToggleSelectKey?.(evtKey);
                           return;
                         }
                         onSelectEvent?.(evt);
+                      }}
+                      onMouseEnter={
+                        isMobile
+                          ? undefined
+                          : (e) =>
+                            scheduleHoverPreview(e.currentTarget.getBoundingClientRect(), {
+                              title: evt.title,
+                              timeText: `${evt.startTime}–${evt.endTime}`,
+                            })
                       }
-                    }}
-                  >
-                    {/* A read-only (subscribed/shared) event previously had no
+                      onMouseLeave={isMobile ? undefined : cancelHoverPreview}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          if (selectionMode) {
+                            onToggleSelectKey?.(evtKey);
+                            return;
+                          }
+                          onSelectEvent?.(evt);
+                        }
+                      }}
+                    >
+                      {/* A read-only (subscribed/shared) event previously had no
                         visual cue at all — the only way to discover it wasn't
                         yours to move was to try dragging it and have nothing
                         happen. Reuses .lock-indicator's look (same "protected"
                         idiom as a locked task block) as a static badge, not a
                         button — there's nothing to toggle here. */}
-                    {evt.canEdit === false && !selectionMode && (
-                      <span className="lock-indicator" title="Read-only — you can't edit or move this event">
-                        <Lock size={11} />
-                      </span>
-                    )}
-                    {!liveTimeOnly && <div className="cal-block-title">{evt.title}</div>}
-                    {showTimeLine && (
-                      <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
-                        {evt.startTime}–{endTime}
-                      </div>
-                    )}
-                    {evt.canEdit !== false && !selectionMode && (
-                      <div
-                        className="resize-handle"
-                        onMouseDown={(e) => handleResizeStart(e, item)}
-                        onTouchStart={(e) => handleResizeStart(e, item)}
-                      />
-                    )}
-                  </div>
-                );
-              }
+                      {evt.canEdit === false && !selectionMode && (
+                        <span className="lock-indicator" title="Read-only — you can't edit or move this event">
+                          <Lock size={11} />
+                        </span>
+                      )}
+                      {!liveTimeOnly && <div className="cal-block-title">{evt.title}</div>}
+                      {showTimeLine && (
+                        <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
+                          {evt.startTime}–{endTime}
+                        </div>
+                      )}
+                      {evt.canEdit !== false && !selectionMode && (
+                        <div
+                          className="resize-handle"
+                          onMouseDown={(e) => handleResizeStart(e, item)}
+                          onTouchStart={(e) => handleResizeStart(e, item)}
+                        />
+                      )}
+                    </div>
+                  );
+                }
 
-              const block = item.data;
-              const { top } = item;
-              const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine, isCompact } = itemLiveState(item);
-              const task = taskById[block.taskId];
-              if (!task) return null;
-              // A sub-task's block displays its PARENT task's name as the primary
-              // label — the parent is the user-facing "goal", the sub-task is just
-              // the concrete step — with the actual sub-task title only revealed
-              // once the block is opened (see BlockDetailModal). displayTitle is
-              // what's shown on the block itself; the real task.title is still what
-              // hover/hint text and the detail modal show.
-              const parentTask = task.parentId ? taskById[task.parentId] : null;
-              const displayTitle = parentTask?.title || task.title;
-              const blockKey = makeSelectionKey('block', block.id);
-              const blockSelected = selectionMode && !!selectedKeys?.has(blockKey);
-              // Drag AND resize are both suppressed while selection mode is
-              // active — see this feature's DRAG CONFLICT note.
-              const dragSuppressed = isMobile || block.isLocked || selectionMode;
-              return (
-                <div
-                  key={block.id}
-                  id={`block-${block.id}`}
-                  className={`cal-block ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''} ${selectionMode && !blockSelected ? 'is-selection-dimmed' : ''}`}
-                  aria-pressed={selectionMode ? blockSelected : undefined}
-                  aria-label={selectionMode ? `Select ${displayTitle}` : undefined}
-                  style={{
-                    top,
-                    height,
-                    borderLeftColor: priorityColor(task.priority),
-                    ...laneStyle,
-                  }}
-                  draggable={!dragSuppressed}
-                  onDragStart={dragSuppressed ? undefined : (e) => handleDragStart(e, item)}
-                  onDragEnd={dragSuppressed ? undefined : endDrag}
-                  // See the event render's matching comment above: Calendar's
-                  // touch-drag-to-reschedule stays the long-press gesture
-                  // here; entering selection mode is via the toolbar button
-                  // only. Suppressed entirely once selectionMode is active.
-                  onTouchStart={selectionMode ? undefined : (e) => handleItemTouchStart(e, item)}
-                  onClick={() => {
-                    if (selectionMode) {
-                      onToggleSelectKey?.(blockKey);
-                      return;
-                    }
-                    onSelectBlock?.(block);
-                  }}
-                  onMouseEnter={
-                    isMobile
-                      ? undefined
-                      : (e) =>
+                const block = item.data;
+                const { top } = item;
+                const { isDragging, isResizing, endTime, height, liveTimeOnly, showTimeLine, isCompact } = itemLiveState(item);
+                const task = taskById[block.taskId];
+                if (!task) return null;
+                // A sub-task's block displays its PARENT task's name as the primary
+                // label — the parent is the user-facing "goal", the sub-task is just
+                // the concrete step — with the actual sub-task title only revealed
+                // once the block is opened (see BlockDetailModal). displayTitle is
+                // what's shown on the block itself; the real task.title is still what
+                // hover/hint text and the detail modal show.
+                const parentTask = task.parentId ? taskById[task.parentId] : null;
+                const displayTitle = parentTask?.title || task.title;
+                const blockKey = makeSelectionKey('block', block.id);
+                const blockSelected = selectionMode && !!selectedKeys?.has(blockKey);
+                // Drag AND resize are both suppressed while selection mode is
+                // active — see this feature's DRAG CONFLICT note.
+                const dragSuppressed = isMobile || block.isLocked || selectionMode;
+                return (
+                  <div
+                    key={block.id}
+                    id={`block-${block.id}`}
+                    className={`cal-block ${isCompact ? 'is-compact' : ''} ${!showTimeLine ? 'no-time-line' : ''} ${block.isLocked ? 'locked' : ''} ${isMobile ? 'is-mobile' : ''} ${block.isPassive ? 'passive' : ''} ${isDragging ? 'is-dragging' : ''} ${isResizing ? 'is-resizing' : ''} ${blockSelected ? 'is-selected' : ''} ${selectionMode && !blockSelected ? 'is-selection-dimmed' : ''}`}
+                    aria-pressed={selectionMode ? blockSelected : undefined}
+                    aria-label={selectionMode ? `Select ${displayTitle}` : undefined}
+                    style={{
+                      top,
+                      height,
+                      borderLeftColor: priorityColor(task.priority),
+                      ...laneStyle,
+                    }}
+                    draggable={!dragSuppressed}
+                    onDragStart={dragSuppressed ? undefined : (e) => handleDragStart(e, item)}
+                    onDragEnd={dragSuppressed ? undefined : endDrag}
+                    // See the event render's matching comment above: Calendar's
+                    // touch-drag-to-reschedule stays the long-press gesture
+                    // here; entering selection mode is via the toolbar button
+                    // only. Suppressed entirely once selectionMode is active.
+                    onTouchStart={selectionMode ? undefined : (e) => handleItemTouchStart(e, item)}
+                    onClick={() => {
+                      if (selectionMode) {
+                        onToggleSelectKey?.(blockKey);
+                        return;
+                      }
+                      onSelectBlock?.(block);
+                    }}
+                    onMouseEnter={
+                      isMobile
+                        ? undefined
+                        : (e) =>
                           scheduleHoverPreview(e.currentTarget.getBoundingClientRect(), {
                             title: displayTitle,
                             timeText: `${block.startTime}–${block.endTime}`,
@@ -1424,118 +1425,118 @@ export default function WeekView({
                                 : projectById[task.projectId]?.name,
                             isPassive: block.isPassive,
                           })
-                  }
-                  onMouseLeave={isMobile ? undefined : cancelHoverPreview}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      if (selectionMode) {
-                        onToggleSelectKey?.(blockKey);
-                        return;
-                      }
-                      onSelectBlock?.(block);
                     }
-                  }}
-                  // Desktop gets the richer HoverPreviewCard instead (see
-                  // below) — mobile keeps this as its native tooltip fallback.
-                  // Both surface displayTitle (the parent's name for a sub-task
-                  // block) rather than the real sub-task title — that's only
-                  // revealed once the block is opened (see BlockDetailModal).
-                  title={
-                    isMobile
-                      ? `${displayTitle}${block.isPassive ? ' (runs unattended)' : ''} · ${block.startTime}–${block.endTime}`
-                      : undefined
-                  }
-                >
-                  {!selectionMode && (
-                    <button
-                      className="lock-indicator"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleBlockLock(block.id);
-                      }}
-                      title={block.isLocked ? 'Unlock block (allow rebalancing)' : 'Lock block (protect from rebalancing)'}
-                    >
-                      {block.isLocked ? <Lock size={11} /> : <Unlock size={11} />}
-                    </button>
-                  )}
-                  {!liveTimeOnly && (
-                    <div className="cal-block-title">
-                      {block.isPassive && <Wind size={12} style={{ verticalAlign: -2, marginRight: 3 }} />}
-                      {displayTitle}
-                    </div>
-                  )}
-                  {/* Mid-resize this is the live readout of the new end time
+                    onMouseLeave={isMobile ? undefined : cancelHoverPreview}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        if (selectionMode) {
+                          onToggleSelectKey?.(blockKey);
+                          return;
+                        }
+                        onSelectBlock?.(block);
+                      }
+                    }}
+                    // Desktop gets the richer HoverPreviewCard instead (see
+                    // below) — mobile keeps this as its native tooltip fallback.
+                    // Both surface displayTitle (the parent's name for a sub-task
+                    // block) rather than the real sub-task title — that's only
+                    // revealed once the block is opened (see BlockDetailModal).
+                    title={
+                      isMobile
+                        ? `${displayTitle}${block.isPassive ? ' (runs unattended)' : ''} · ${block.startTime}–${block.endTime}`
+                        : undefined
+                    }
+                  >
+                    {!selectionMode && (
+                      <button
+                        className="lock-indicator"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleBlockLock(block.id);
+                        }}
+                        title={block.isLocked ? 'Unlock block (allow rebalancing)' : 'Lock block (protect from rebalancing)'}
+                      >
+                        {block.isLocked ? <Lock size={11} /> : <Unlock size={11} />}
+                      </button>
+                    )}
+                    {!liveTimeOnly && (
+                      <div className="cal-block-title">
+                        {block.isPassive && <Wind size={12} style={{ verticalAlign: -2, marginRight: 3 }} />}
+                        {displayTitle}
+                      </div>
+                    )}
+                    {/* Mid-resize this is the live readout of the new end time
                       (see itemLiveState), highlighted so the change is
                       obvious — otherwise it's the block's own time range. */}
-                  {showTimeLine && (
-                    <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
-                      {block.startTime}–{endTime}
-                    </div>
-                  )}
-                  {!block.isLocked && !selectionMode && (
-                    <div
-                      className="resize-handle"
-                      onMouseDown={(e) => handleResizeStart(e, item)}
-                      onTouchStart={(e) => handleResizeStart(e, item)}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })}
+                    {showTimeLine && (
+                      <div className={`cal-block-time ${isResizing ? 'is-live' : ''}`}>
+                        {block.startTime}–{endTime}
+                      </div>
+                    )}
+                    {!block.isLocked && !selectionMode && (
+                      <div
+                        className="resize-handle"
+                        onMouseDown={(e) => handleResizeStart(e, item)}
+                        onTouchStart={(e) => handleResizeStart(e, item)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
 
-      {openCluster &&
-        createPortal(
-          <div
-            className="cal-cluster-popover"
-            ref={clusterPopoverRef}
-            style={{ position: 'fixed', ...computeClusterPopoverStyle(openCluster.rect) }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {openCluster.items.map((it) => {
-              if (it.type === 'block') {
-                const t = taskById[it.data.taskId];
-                if (!t) return null;
+        {openCluster &&
+          createPortal(
+            <div
+              className="cal-cluster-popover"
+              ref={clusterPopoverRef}
+              style={{ position: 'fixed', ...computeClusterPopoverStyle(openCluster.rect) }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {openCluster.items.map((it) => {
+                if (it.type === 'block') {
+                  const t = taskById[it.data.taskId];
+                  if (!t) return null;
+                  return (
+                    <button
+                      key={`block-${it.data.id}`}
+                      className="cal-cluster-popover-item"
+                      onClick={() => {
+                        setOpenCluster(null);
+                        onSelectBlock?.(it.data);
+                      }}
+                    >
+                      <span className="cal-cluster-popover-time">
+                        {it.data.startTime}–{it.data.endTime}
+                      </span>
+                      <span className="cal-cluster-popover-title">{t.title}</span>
+                    </button>
+                  );
+                }
                 return (
                   <button
-                    key={`block-${it.data.id}`}
+                    key={`event-${it.data.id}`}
                     className="cal-cluster-popover-item"
                     onClick={() => {
                       setOpenCluster(null);
-                      onSelectBlock?.(it.data);
+                      onSelectEvent?.(it.data);
                     }}
                   >
                     <span className="cal-cluster-popover-time">
                       {it.data.startTime}–{it.data.endTime}
                     </span>
-                    <span className="cal-cluster-popover-title">{t.title}</span>
+                    <span className="cal-cluster-popover-title">{it.data.title}</span>
                   </button>
                 );
-              }
-              return (
-                <button
-                  key={`event-${it.data.id}`}
-                  className="cal-cluster-popover-item"
-                  onClick={() => {
-                    setOpenCluster(null);
-                    onSelectEvent?.(it.data);
-                  }}
-                >
-                  <span className="cal-cluster-popover-time">
-                    {it.data.startTime}–{it.data.endTime}
-                  </span>
-                  <span className="cal-cluster-popover-title">{it.data.title}</span>
-                </button>
-              );
-            })}
-          </div>,
-          document.body
-        )}
+              })}
+            </div>,
+            document.body
+          )}
       </div>
 
       {hoverPreview && <HoverPreviewCard {...hoverPreview} />}
