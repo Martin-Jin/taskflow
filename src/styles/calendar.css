@@ -246,6 +246,7 @@
 }
 
 @media (max-width: 639px) {
+
   /* Mobile reads as one cohesive full-screen surface — inspired by Google
      Calendar's mobile layout: a distinctly colored app-bar strip (hamburger,
      date title, trailing icon actions) sitting flush atop the grid, both
@@ -366,6 +367,7 @@
 }
 
 @media (max-width: 639px) {
+
   /* Clear the fixed mobile bottom-tab-bar, same offset .add-task-btn uses. */
   .calendar-fab-group {
     bottom: calc(var(--bottom-bar-height) + var(--space-4) + env(safe-area-inset-bottom, 0));
@@ -397,7 +399,8 @@
 .week-allday-gutter,
 .week-allday-cell {
   position: sticky;
-  z-index: 1; /* under .day-header's 2, so headers stay on top when scrolling */
+  z-index: 1;
+  /* under .day-header's 2, so headers stay on top when scrolling */
   background: var(--color-bg-surface-raised);
   border-bottom: 1px solid var(--color-border);
 }
@@ -562,14 +565,13 @@
 
 .day-column {
   position: relative;
+  isolation: isolate;
   border-left: 1px solid var(--color-border);
-  background-image: repeating-linear-gradient(
-    to bottom,
-    var(--color-border) 0,
-    var(--color-border) 1px,
-    transparent 1px,
-    transparent var(--hour-height, 48px)
-  );
+  background-image: repeating-linear-gradient(to bottom,
+      var(--color-border) 0,
+      var(--color-border) 1px,
+      transparent 1px,
+      transparent var(--hour-height, 48px));
 }
 
 .day-column.is-dragover {
@@ -705,6 +707,7 @@
 }
 
 @media (hover: hover) {
+
   .cal-routine-block-label,
   .cal-routine-block-time {
     opacity: 0;
@@ -725,7 +728,8 @@
 
 .cal-block:focus-visible {
   outline: 2px solid var(--color-accent-border);
-  outline-offset: -2px; /* inset — see global.css's button:focus-visible comment */
+  outline-offset: -2px;
+  /* inset — see global.css's button:focus-visible comment */
   z-index: 5;
 }
 
@@ -1025,7 +1029,8 @@
 
 .cal-event:focus-visible {
   outline: 2px solid var(--color-accent-border);
-  outline-offset: -2px; /* inset — see global.css's button:focus-visible comment */
+  outline-offset: -2px;
+  /* inset — see global.css's button:focus-visible comment */
   z-index: 5;
 }
 
@@ -1044,13 +1049,11 @@
 
 .cal-event.free-time {
   /* Scheduler-ignored / Treat as free time — visually a muted striped texture */
-  background: repeating-linear-gradient(
-    45deg,
-    var(--color-bg-surface-hover),
-    var(--color-bg-surface-hover) 4px,
-    var(--color-bg-surface) 4px,
-    var(--color-bg-surface) 8px
-  );
+  background: repeating-linear-gradient(45deg,
+      var(--color-bg-surface-hover),
+      var(--color-bg-surface-hover) 4px,
+      var(--color-bg-surface) 4px,
+      var(--color-bg-surface) 8px);
   border-left-style: dashed;
   color: var(--color-text-secondary);
   opacity: 0.95;
@@ -1154,6 +1157,7 @@
 }
 
 @media (max-width: 639px) {
+
   /* A 5px strip is fine for a mouse pointer but far too thin to reliably
      grab with a finger — extend the actual touch target to ~24px via a
      transparent pseudo-element rather than growing the visible strip
@@ -1338,13 +1342,11 @@
   border-left-style: dashed;
   border-left-color: var(--color-border-strong);
   color: var(--color-text-secondary);
-  background: repeating-linear-gradient(
-    45deg,
-    var(--color-bg-surface-hover),
-    var(--color-bg-surface-hover) 4px,
-    var(--color-bg-surface) 4px,
-    var(--color-bg-surface) 8px
-  );
+  background: repeating-linear-gradient(45deg,
+      var(--color-bg-surface-hover),
+      var(--color-bg-surface-hover) 4px,
+      var(--color-bg-surface) 4px,
+      var(--color-bg-surface) 8px);
 }
 
 .month-chip-cluster {
